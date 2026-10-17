@@ -1,0 +1,15 @@
+name: SDD Gatekeeper Pipeline
+on:
+  pull_request:
+    branches: [ main, develop ]
+jobs:
+  verify-sdd-compliance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - run: |
+          if [ ! -d "specs" ]; then echo "❌ Error: 'specs' directory missing."; exit 1; fi
+      - run: npm test

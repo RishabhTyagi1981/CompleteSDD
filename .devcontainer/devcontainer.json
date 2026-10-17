@@ -1,0 +1,8 @@
+{
+  "name": "SDD Isolated Sandbox",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu", 
+  "features": { "ghcr.io/devcontainers/features/node:1": { "version": "20" } },
+  "remoteUser": "vscode",
+  "updateContentCommand": "npm install",
+  "postCreateCommand": "echo 'Sandbox initialized successfully. Safe for AI execution.'"
+}

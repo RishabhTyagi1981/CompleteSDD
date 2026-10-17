@@ -1,0 +1,13 @@
+version: '3.8'
+services:
+  web-app:
+    build: .
+    ports: ["3000:3000"]
+    environment:
+      - DATABASE_URL=postgres://sdd_user:sdd_pass@postgres-db:5432/sdd_db
+    depends_on: { postgres-db: { condition: service_healthy } }
+  postgres-db:
+    image: postgres:16-alpine
+    environment: [POSTGRES_USER=sdd_user, POSTGRES_PASSWORD=sdd_pass, POSTGRES_DB=sdd_db]
+    volumes: ["./init.sql:/docker-entrypoint-initdb.d/init.sql"]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U sdd_user -d sdd_db"], interval: 5s, timeout: 5s, retries: 5 }
