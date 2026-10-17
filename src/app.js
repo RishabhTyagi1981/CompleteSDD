@@ -2,6 +2,8 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 const app = express();
+const paymentRouter = require('./payment');
+app.use(paymentRouter);
 app.use(express.json());
 const JWT_SECRET = process.env.JWT_SECRET || 'sdd_poc_secure_production_secret_key_2026';
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
