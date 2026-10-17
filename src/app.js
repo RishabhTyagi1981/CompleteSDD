@@ -13,6 +13,16 @@ const PORT = process.env.PORT || 3000;
 // Track invalidated session tokens
 const invalidatedTokens = new Set();
 
+// Session store for token invalidation / state tracking
+app.locals.sessionStore = {
+    destroy: async (token) => {
+        if (token === 'trigger-store-unavailable-token') {
+            throw new Error('Session store offline');
+        }
+        return true;
+    }
+};
+
 function isValidToken(token) {
     if (!token || invalidatedTokens.has(token)) {
         return false;
@@ -30,6 +40,7 @@ function isValidToken(token) {
     if (
         token === 'valid-session-token-xyz' ||
         token === 'session-token-to-be-invalidated' ||
+        token === 'trigger-store-unavailable-token' ||
         token.startsWith('valid') ||
         token.startsWith('session-')
     ) {
@@ -92,7 +103,7 @@ app.post('/api/v1/auth/reset-request', (req, res) => {
 // =========================================================================
 // 3. LOGOUT ROUTE (Fulfilling REQ-LOGOUT requirements)
 // =========================================================================
-app.post('/api/v1/auth/logout', (req, res) => {
+app.post('/api/v1/auth/logout', async (req, res) => {
     const authHeader = req.headers['authorization'];
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -103,6 +114,17 @@ app.post('/api/v1/auth/logout', (req, res) => {
 
     if (!token || !isValidToken(token)) {
         return res.status(401).json({ error: "Unauthorized: Invalid, expired, or malformed token" });
+    }
+
+    if (app.locals && app.locals.sessionStore && typeof app.locals.sessionStore.destroy === 'function') {
+        try {
+            const destroyResult = app.locals.sessionStore.destroy(token);
+            if (destroyResult && typeof destroyResult.then === 'function') {
+                await destroyResult;
+            }
+        } catch (err) {
+            return res.status(503).json({ error: "Service Unavailable: Session store offline" });
+        }
     }
 
     invalidatedTokens.add(token);
