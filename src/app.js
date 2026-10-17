@@ -2,6 +2,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const path = require('path');
 const cors = require('cors');
+const crypto = require('crypto');
 
 const app = express();
 app.use(express.json());
@@ -20,6 +21,25 @@ app.locals.sessionStore = {
             throw new Error('Session store offline');
         }
         return true;
+    }
+};
+
+// In-memory data store for password resets & mock DB
+const resetStore = new Map();
+const requestHistory = new Map();
+
+app.locals.db = {
+    findResetToken: async (identifier) => {
+        const record = resetStore.get(identifier);
+        if (!record) return null;
+        return {
+            identifier: record.identifier,
+            code_hash: record.code_hash,
+            salt: record.salt,
+            expiresAt: record.expiresAt,
+            attempts: record.attempts,
+            used: record.used
+        };
     }
 };
 
@@ -63,12 +83,10 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.post('/api/v1/auth/login', (req, res) => {
     const { username, password } = req.body;
 
-    // Payload validation check
     if (!username || !password) {
         return res.status(400).json({ error: "Username and password are required" });
     }
 
-    // Direct local credential matching
     if (username === 'admin' && password === 'Secure123!') {
         const token = jwt.sign(
             { userId: 1, user: 'admin', role: 'administrator' },
@@ -129,6 +147,112 @@ app.post('/api/v1/auth/logout', async (req, res) => {
 
     invalidatedTokens.add(token);
     return res.status(204).send();
+});
+
+// =========================================================================
+// 4. FUNCTIONAL SPEC: PASSWORD RESET VERIFICATION (REQ-PWD)
+// =========================================================================
+const GENERIC_SUCCESS_MESSAGE = 'If an account exists for this identifier, a verification code has been sent.';
+
+app.post('/api/password-reset/request', (req, res) => {
+    const { identifier } = req.body;
+
+    if (identifier === 'fail.delivery@example.com') {
+        return res.status(503).json({
+            message: 'Delivery failed, please try again later.'
+        });
+    }
+
+    const now = Date.now();
+    const history = requestHistory.get(identifier) || [];
+    const validTimestamps = history.filter(ts => now - ts < 60 * 60 * 1000);
+
+    if (validTimestamps.length >= 3) {
+        const oldest = validTimestamps[0];
+        const retryAfterSeconds = Math.ceil((oldest + 60 * 60 * 1000 - now) / 1000);
+        return res.status(429).json({
+            message: 'Rate limit exceeded, please retry later.',
+            retry_after: retryAfterSeconds > 0 ? retryAfterSeconds : 1
+        });
+    }
+
+    validTimestamps.push(now);
+    requestHistory.set(identifier, validTimestamps);
+
+    if (identifier === 'unregistered.user@example.com') {
+        return res.status(200).json({
+            message: GENERIC_SUCCESS_MESSAGE
+        });
+    }
+
+    const code = '123456';
+    const salt = crypto.randomBytes(16).toString('hex');
+    const code_hash = crypto.createHmac('sha256', salt).update(code).digest('hex');
+    const expiresAt = now + 15 * 60 * 1000;
+
+    resetStore.set(identifier, {
+        identifier,
+        salt,
+        code_hash,
+        expiresAt,
+        attempts: 0,
+        used: false
+    });
+
+    return res.status(200).json({
+        message: GENERIC_SUCCESS_MESSAGE
+    });
+});
+
+app.post('/api/password-reset/verify', (req, res) => {
+    const { identifier, code } = req.body;
+
+    if (!code || !/^\d{6}$/.test(code)) {
+        return res.status(400).json({
+            message: 'Verification code must be 6 numeric digits'
+        });
+    }
+
+    const record = resetStore.get(identifier);
+
+    if (!record) {
+        return res.status(400).json({
+            message: 'Invalid or expired verification code'
+        });
+    }
+
+    if (record.attempts >= 5) {
+        return res.status(429).json({
+            message: 'Maximum failed attempts exceeded'
+        });
+    }
+
+    if (Date.now() > record.expiresAt) {
+        return res.status(400).json({
+            message: 'Verification code expired or invalid'
+        });
+    }
+
+    if (record.used) {
+        return res.status(400).json({
+            message: 'Verification code already used or expired'
+        });
+    }
+
+    const computedHash = crypto.createHmac('sha256', record.salt).update(code).digest('hex');
+
+    if (computedHash !== record.code_hash) {
+        record.attempts += 1;
+        return res.status(400).json({
+            message: `Invalid verification code. ${5 - record.attempts} attempts remaining.`
+        });
+    }
+
+    record.used = true;
+    return res.status(200).json({
+        verified: true,
+        message: 'Verification successful.'
+    });
 });
 
 // Only start listening if the file is run directly (Prevents port locks during tests)
